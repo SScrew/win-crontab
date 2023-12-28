@@ -3,12 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
-	"github.com/olekukonko/tablewriter"
-	"github.com/robfig/cron/v3"
-	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
-	"golang.org/x/text/encoding/simplifiedchinese"
 	"math"
 	"os"
 	"os/exec"
@@ -18,6 +12,13 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"github.com/olekukonko/tablewriter"
+	"github.com/robfig/cron/v3"
+	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 type CrontabCmdList struct {
@@ -32,19 +33,28 @@ type CrontabTaskList struct {
 	ErrMsg  interface{}
 }
 
+type Charset string
+
 var (
 	chanPool = make(chan int, 3)
 	wg       sync.WaitGroup
 	mutex    sync.Mutex
 	ccl      []CrontabCmdList
 	tasks    []CrontabTaskList
+	charset  = UTF8
+	logday   = 7
 )
 
-const GoCrontabVersion = "v0.0.8"
+const (
+	UTF8    = Charset("UTF-8")
+	GB18030 = Charset("GB18030")
+)
+
+const GoCrontabVersion = "v0.0.8.1"
 
 func init() {
-	initLog()
 	initConfig()
+	initLog()
 }
 
 func main() {
@@ -100,8 +110,8 @@ func main() {
 		mutex.Lock()
 		table.Append([]string{
 			fmt.Sprintf("%d", v.Id),
-			interceptStrFunc(v.Cmd, 40),
 			v.Crontab,
+			interceptStrFunc(v.Cmd, 40),
 			interceptStrFunc(errMsg, 40),
 		})
 		mutex.Unlock()
@@ -224,15 +234,8 @@ func checkExec(outputErr error, Cmd string, outputByte []byte, startTime time.Ti
 	endTime := time.Since(startTime)
 	ExecSecondsS := strconv.FormatFloat(endTime.Seconds(), 'f', 2, 64)
 
-	log.Println("执行命令：", Cmd, "输出：", convertByte2String(outputByte, "GB18030"), "执行耗时：", ExecSecondsS+" s")
+	log.Println("执行命令：", Cmd, "输出：", convertByte2String(outputByte, charset), "执行耗时：", ExecSecondsS+" s")
 }
-
-type Charset string
-
-const (
-	UTF8    = Charset("UTF-8")
-	GB18030 = Charset("GB18030")
-)
 
 // 处理终端中文显示乱码
 func convertByte2String(byte []byte, charset Charset) string {
@@ -263,14 +266,14 @@ func initLog() {
 	  `WithMaxAge 设置文件清理前的最长保存时间`
 	  `WithRotationCount` 设置文件清理前最多保存的个数
 	*/
-	// 下面配置日志每隔 1天 转一个新文件，保留最近 1周 的日志文件，多余的自动清理掉。
+	// 下面配置日志每隔 1天 转一个新文件，保留最近 7天 的日志文件，多余的自动清理掉。
 	LinkName := path + "go-crontab.log"
 
 	writer, _ := rotatelogs.New(
-		//path+".%Y%m%d%H%M",
+		// path+".%Y%m%d%H%M",
 		path+"go-crontab-%Y-%m-%d.log",
 		rotatelogs.WithLinkName(LinkName),
-		rotatelogs.WithMaxAge(time.Duration(604800)*time.Second),
+		rotatelogs.WithMaxAge(time.Duration(logday*86400)*time.Second),
 		rotatelogs.WithRotationTime(time.Duration(86400)*time.Second),
 	)
 	log.SetOutput(writer)
@@ -289,5 +292,12 @@ func initConfig() {
 			// Config file was found but another error was produced
 			panic("read config error 读取配置文件错误")
 		}
+	}
+
+	if viper.Get(`app.charset`) == "GB18030" {
+		charset = GB18030
+	}
+	if tmp := viper.GetInt(`app.logday`); tmp > 0 {
+		logday = tmp
 	}
 }
